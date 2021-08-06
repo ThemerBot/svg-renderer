@@ -17,7 +17,7 @@ fn parse_hex(hex: &str) -> Option<u64> {
 }
 
 fn parse_color(color: &str) -> Option<Color> {
-    if color.len() != 3 * 2 {
+    if color.len() != 6 {
         return None;
     }
 
