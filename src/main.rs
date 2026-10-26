@@ -1,3 +1,4 @@
+use resvg::{tiny_skia, usvg};
 use rocket::{
     error,
     figment::{
@@ -10,7 +11,6 @@ use rocket::{
     tokio::task::spawn_blocking,
     Config, Responder,
 };
-use resvg::{tiny_skia, usvg};
 
 const TEMPLATE: &str = include_str!("../colors.svg");
 
@@ -116,7 +116,10 @@ async fn render(
         .and_then(|result| result)
         .map_err(|message| {
             error!("Failed to render image: {}", message);
-            (Status::InternalServerError, "failed to render image".to_string())
+            (
+                Status::InternalServerError,
+                "failed to render image".to_string(),
+            )
         })?;
 
     Ok(Png::new(png))
@@ -127,8 +130,8 @@ fn render_png(svg: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("invalid SVG: {}", e))?;
 
     let size = tree.size().to_int_size();
-    let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
-        .ok_or("could not allocate pixmap")?;
+    let mut pixmap =
+        tiny_skia::Pixmap::new(size.width(), size.height()).ok_or("could not allocate pixmap")?;
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
     pixmap
@@ -147,7 +150,10 @@ fn figment() -> Figment {
     Figment::from(defaults)
         .merge(Toml::file(Env::var_or("ROCKET_CONFIG", "Rocket.toml")).nested())
         .merge(Env::prefixed("ROCKET_").ignore(&["PROFILE"]).global())
-        .select(Profile::from_env_or("ROCKET_PROFILE", Config::DEFAULT_PROFILE))
+        .select(Profile::from_env_or(
+            "ROCKET_PROFILE",
+            Config::DEFAULT_PROFILE,
+        ))
 }
 
 #[rocket::main]
@@ -172,7 +178,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_colors() {
-        for input in ["", "fff", "fffffff", "gggggg", "+f+f+f", "-f-f-f", " fffff", "aébcd"] {
+        for input in [
+            "", "fff", "fffffff", "gggggg", "+f+f+f", "-f-f-f", " fffff", "aébcd",
+        ] {
             assert_eq!(parse_color(input), None, "{:?} should be rejected", input);
         }
     }
