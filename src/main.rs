@@ -6,8 +6,8 @@ use rocket::{
     http::{ContentType, Status},
     Config,
 };
-use std::fs::File;
-use std::io::prelude::*;
+
+const TEMPLATE: &str = include_str!("../colors.svg");
 
 type Rgb = [u8; 3];
 
@@ -36,10 +36,7 @@ async fn render(
 ) -> (Status, (ContentType, Vec<u8>)) {
     let colors = [color1, color2, color3, color4, color5];
 
-    let mut file = File::open("colors.svg").expect("Unable to open file");
-    let mut svg_data = String::new();
-    file.read_to_string(&mut svg_data)
-        .expect("Unable to read file");
+    let mut svg_data = TEMPLATE.to_string();
 
     for (index, color) in colors.iter().enumerate() {
         if let Some(rgb_color) = parse_color(color) {
