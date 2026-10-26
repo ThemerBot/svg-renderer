@@ -4,6 +4,7 @@ extern crate rocket;
 use rocket::{
     config::LogLevel,
     http::{ContentType, Status},
+    tokio::task::spawn_blocking,
     Config,
 };
 
@@ -87,10 +88,14 @@ async fn render(
     let svg = fill_template([color1, color2, color3, color4, color5])
         .map_err(|message| (Status::BadRequest, message))?;
 
-    let png = render_png(&svg).map_err(|message| {
-        error!("Failed to render image: {}", message);
-        (Status::InternalServerError, "failed to render image".to_string())
-    })?;
+    let png = spawn_blocking(move || render_png(&svg))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|result| result)
+        .map_err(|message| {
+            error!("Failed to render image: {}", message);
+            (Status::InternalServerError, "failed to render image".to_string())
+        })?;
 
     Ok((ContentType::PNG, png))
 }
