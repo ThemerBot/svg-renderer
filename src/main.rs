@@ -2,7 +2,10 @@
 extern crate rocket;
 
 use rocket::{
-    config::LogLevel,
+    figment::{
+        providers::{Env, Format, Toml},
+        Figment, Profile,
+    },
     http::{Header, Status},
     tokio::task::spawn_blocking,
     Config,
@@ -132,16 +135,23 @@ fn render_png(svg: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("could not encode PNG: {}", e))
 }
 
+/// Rocket's standard configuration sources (`Rocket.toml`, `ROCKET_*`
+/// environment variables), layered over defaults that use port 9278.
+fn figment() -> Figment {
+    let defaults = Config {
+        port: 9278,
+        ..Config::default()
+    };
+
+    Figment::from(defaults)
+        .select(Profile::from_env_or("ROCKET_PROFILE", Config::DEFAULT_PROFILE))
+        .merge(Toml::file(Env::var_or("ROCKET_CONFIG", "Rocket.toml")).nested())
+        .merge(Env::prefixed("ROCKET_").ignore(&["PROFILE"]).global())
+}
+
 #[rocket::main]
 async fn main() {
-    let mut config = Config::default();
-    config.port = 9278;
-
-    if !cfg!(debug_assertions) {
-        config.log_level = LogLevel::Critical;
-    }
-
-    rocket::custom(config)
+    rocket::custom(figment())
         .mount("/", routes![render])
         .launch()
         .await
