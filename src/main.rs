@@ -26,6 +26,57 @@ fn is_light([red, green, blue]: Rgb) -> bool {
     yiq >= 128
 }
 
+/// Substitutes `{bg_N}` and `{text_N}` placeholders in a single pass over the
+/// template. Returns `None` if any of the colors is invalid.
+fn fill_template(colors: [&str; 5]) -> Option<String> {
+    let mut text_colors = [""; 5];
+    for (text_color, color) in text_colors.iter_mut().zip(colors) {
+        *text_color = if is_light(parse_color(color)?) {
+            "000000"
+        } else {
+            "FFFFFF"
+        };
+    }
+
+    let mut svg = String::with_capacity(TEMPLATE.len());
+    let mut rest = TEMPLATE;
+
+    while let Some(start) = rest.find('{') {
+        svg.push_str(&rest[..start]);
+        rest = &rest[start..];
+
+        let replacement = rest.find('}').and_then(|end| {
+            let value = placeholder_value(&rest[1..end], &colors, &text_colors)?;
+            Some((value, end))
+        });
+
+        match replacement {
+            Some((value, end)) => {
+                svg.push_str(value);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                svg.push('{');
+                rest = &rest[1..];
+            }
+        }
+    }
+
+    svg.push_str(rest);
+    Some(svg)
+}
+
+fn placeholder_value<'a>(key: &str, bg: &[&'a str; 5], text: &[&'a str; 5]) -> Option<&'a str> {
+    let (kind, index) = key.split_once('_')?;
+    let index: usize = index.parse().ok()?;
+
+    match kind {
+        "bg" => bg.get(index).copied(),
+        "text" => text.get(index).copied(),
+        _ => None,
+    }
+}
+
 #[get("/render/<color1>/<color2>/<color3>/<color4>/<color5>")]
 async fn render(
     color1: &str,
@@ -34,25 +85,10 @@ async fn render(
     color4: &str,
     color5: &str,
 ) -> (Status, (ContentType, Vec<u8>)) {
-    let colors = [color1, color2, color3, color4, color5];
-
-    let mut svg_data = TEMPLATE.to_string();
-
-    for (index, color) in colors.iter().enumerate() {
-        if let Some(rgb_color) = parse_color(color) {
-            let text_color = if is_light(rgb_color) {
-                "000000"
-            } else {
-                "FFFFFF"
-            };
-
-            svg_data = svg_data
-                .replace(&format!("{{bg_{}}}", index).to_string(), color)
-                .replace(&format!("{{text_{}}}", index).to_string(), text_color);
-        } else {
-            return (Status::BadRequest, (ContentType::HTML, vec![]));
-        }
-    }
+    let svg_data = match fill_template([color1, color2, color3, color4, color5]) {
+        Some(svg_data) => svg_data,
+        None => return (Status::BadRequest, (ContentType::HTML, vec![])),
+    };
 
     let rtree = usvg::Tree::from_str(&svg_data, &usvg::Options::default()).unwrap();
 
@@ -103,5 +139,33 @@ mod tests {
         assert!(is_light([255, 255, 0]));
         assert!(!is_light([0, 0, 0]));
         assert!(!is_light([0, 0, 255]));
+    }
+
+    #[test]
+    fn fills_every_placeholder() {
+        let svg = fill_template(["ffffff", "000000", "ff0000", "00ff00", "0000ff"]).unwrap();
+
+        assert!(!svg.contains("{bg_"), "unfilled bg placeholder");
+        assert!(!svg.contains("{text_"), "unfilled text placeholder");
+        assert!(svg.contains(r##"fill="#ffffff" class="bg bg-1""##));
+        assert!(svg.contains(r##"fill="#000000" d="M94.36"##));
+        assert!(svg.contains(r##"fill="#000000" class="bg bg-2""##));
+        assert!(svg.contains(r##"fill="#FFFFFF" d="M235.48"##));
+    }
+
+    #[test]
+    fn rejects_template_with_invalid_color() {
+        assert_eq!(fill_template(["ffffff", "000000", "nope!!", "00ff00", "0000ff"]), None);
+    }
+
+    #[test]
+    fn leaves_unknown_braces_alone() {
+        let bg = ["a"; 5];
+        let text = ["b"; 5];
+        assert_eq!(placeholder_value("bg_4", &bg, &text), Some("a"));
+        assert_eq!(placeholder_value("text_0", &bg, &text), Some("b"));
+        assert_eq!(placeholder_value("bg_5", &bg, &text), None);
+        assert_eq!(placeholder_value("other_0", &bg, &text), None);
+        assert_eq!(placeholder_value("", &bg, &text), None);
     }
 }
