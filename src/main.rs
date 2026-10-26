@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate rocket;
 
-use palette::Srgba;
 use rocket::{
     config::LogLevel,
     http::{ContentType, Status},
@@ -10,27 +9,20 @@ use rocket::{
 use std::fs::File;
 use std::io::prelude::*;
 
-type Color = Srgba<u64>;
+type Rgb = [u8; 3];
 
-fn parse_hex(hex: &str) -> Option<u64> {
-    u64::from_str_radix(hex, 16).ok()
-}
-
-fn parse_color(color: &str) -> Option<Color> {
-    if color.len() != 6 {
+fn parse_color(color: &str) -> Option<Rgb> {
+    if color.len() != 6 || !color.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
 
-    let red = parse_hex(&color[0..2])?;
-    let green = parse_hex(&color[2..4])?;
-    let blue = parse_hex(&color[4..6])?;
+    let channel = |i: usize| u8::from_str_radix(&color[i..i + 2], 16).ok();
 
-    Some(Color::new(red, green, blue, 255))
+    Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
-fn is_light(color: Color) -> bool {
-    let rgb = color.color;
-    let yiq = (rgb.red * 299 + rgb.green * 587 + rgb.blue * 114) / 1000;
+fn is_light([red, green, blue]: Rgb) -> bool {
+    let yiq = (u32::from(red) * 299 + u32::from(green) * 587 + u32::from(blue) * 114) / 1000;
     yiq >= 128
 }
 
@@ -88,4 +80,31 @@ async fn main() {
         .launch()
         .await
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_colors() {
+        assert_eq!(parse_color("000000"), Some([0, 0, 0]));
+        assert_eq!(parse_color("FFffFF"), Some([255, 255, 255]));
+        assert_eq!(parse_color("1a2B3c"), Some([0x1a, 0x2b, 0x3c]));
+    }
+
+    #[test]
+    fn rejects_invalid_colors() {
+        for input in ["", "fff", "fffffff", "gggggg", "+f+f+f", "-f-f-f", " fffff", "aébcd"] {
+            assert_eq!(parse_color(input), None, "{:?} should be rejected", input);
+        }
+    }
+
+    #[test]
+    fn picks_contrasting_text() {
+        assert!(is_light([255, 255, 255]));
+        assert!(is_light([255, 255, 0]));
+        assert!(!is_light([0, 0, 0]));
+        assert!(!is_light([0, 0, 255]));
+    }
 }
