@@ -1,14 +1,14 @@
-#[macro_use]
-extern crate rocket;
-
 use rocket::{
+    error,
     figment::{
         providers::{Env, Format, Toml},
         Figment, Profile,
     },
+    get,
     http::{Header, Status},
+    routes,
     tokio::task::spawn_blocking,
-    Config,
+    Config, Responder,
 };
 
 const TEMPLATE: &str = include_str!("../colors.svg");
