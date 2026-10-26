@@ -27,15 +27,14 @@ fn is_light([red, green, blue]: Rgb) -> bool {
 }
 
 /// Substitutes `{bg_N}` and `{text_N}` placeholders in a single pass over the
-/// template. Returns `None` if any of the colors is invalid.
-fn fill_template(colors: [&str; 5]) -> Option<String> {
+/// template. Fails with a user-facing message if any of the colors is invalid.
+fn fill_template(colors: [&str; 5]) -> Result<String, String> {
     let mut text_colors = [""; 5];
     for (text_color, color) in text_colors.iter_mut().zip(colors) {
-        *text_color = if is_light(parse_color(color)?) {
-            "000000"
-        } else {
-            "FFFFFF"
-        };
+        let rgb = parse_color(color)
+            .ok_or_else(|| format!("invalid color {:?}: expected 6 hex digits", color))?;
+
+        *text_color = if is_light(rgb) { "000000" } else { "FFFFFF" };
     }
 
     let mut svg = String::with_capacity(TEMPLATE.len());
@@ -63,7 +62,7 @@ fn fill_template(colors: [&str; 5]) -> Option<String> {
     }
 
     svg.push_str(rest);
-    Some(svg)
+    Ok(svg)
 }
 
 fn placeholder_value<'a>(key: &str, bg: &[&'a str; 5], text: &[&'a str; 5]) -> Option<&'a str> {
@@ -84,19 +83,30 @@ async fn render(
     color3: &str,
     color4: &str,
     color5: &str,
-) -> (Status, (ContentType, Vec<u8>)) {
-    let svg_data = match fill_template([color1, color2, color3, color4, color5]) {
-        Some(svg_data) => svg_data,
-        None => return (Status::BadRequest, (ContentType::HTML, vec![])),
-    };
+) -> Result<(ContentType, Vec<u8>), (Status, String)> {
+    let svg = fill_template([color1, color2, color3, color4, color5])
+        .map_err(|message| (Status::BadRequest, message))?;
 
-    let rtree = usvg::Tree::from_str(&svg_data, &usvg::Options::default()).unwrap();
+    let png = render_png(&svg).map_err(|message| {
+        error!("Failed to render image: {}", message);
+        (Status::InternalServerError, "failed to render image".to_string())
+    })?;
 
-    let pixmap_size = rtree.svg_node().size.to_screen_size();
-    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height()).unwrap();
-    resvg::render(&rtree, usvg::FitTo::Original, pixmap.as_mut()).unwrap();
+    Ok((ContentType::PNG, png))
+}
 
-    (Status::Ok, (ContentType::PNG, pixmap.encode_png().unwrap()))
+fn render_png(svg: &str) -> Result<Vec<u8>, String> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default())
+        .map_err(|e| format!("invalid SVG: {}", e))?;
+
+    let size = tree.svg_node().size.to_screen_size();
+    let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
+        .ok_or("could not allocate pixmap")?;
+    resvg::render(&tree, usvg::FitTo::Original, pixmap.as_mut()).ok_or("could not render SVG")?;
+
+    pixmap
+        .encode_png()
+        .map_err(|e| format!("could not encode PNG: {}", e))
 }
 
 #[rocket::main]
@@ -105,7 +115,7 @@ async fn main() {
     config.port = 9278;
 
     if !cfg!(debug_assertions) {
-        config.log_level = LogLevel::Off;
+        config.log_level = LogLevel::Critical;
     }
 
     rocket::custom(config)
@@ -155,7 +165,18 @@ mod tests {
 
     #[test]
     fn rejects_template_with_invalid_color() {
-        assert_eq!(fill_template(["ffffff", "000000", "nope!!", "00ff00", "0000ff"]), None);
+        assert_eq!(
+            fill_template(["ffffff", "000000", "nope!!", "00ff00", "0000ff"]),
+            Err(r#"invalid color "nope!!": expected 6 hex digits"#.to_string())
+        );
+    }
+
+    #[test]
+    fn renders_png() {
+        let svg = fill_template(["ffffff", "000000", "ff0000", "00ff00", "0000ff"]).unwrap();
+        let png = render_png(&svg).unwrap();
+
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 
     #[test]
