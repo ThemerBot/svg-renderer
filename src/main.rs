@@ -3,7 +3,7 @@ extern crate rocket;
 
 use rocket::{
     config::LogLevel,
-    http::{ContentType, Status},
+    http::{Header, Status},
     tokio::task::spawn_blocking,
     Config,
 };
@@ -77,6 +77,24 @@ fn placeholder_value<'a>(key: &str, bg: &[&'a str; 5], text: &[&'a str; 5]) -> O
     }
 }
 
+/// A rendered image. The output depends only on the URL, so clients and
+/// proxies may cache it indefinitely.
+#[derive(Responder)]
+#[response(content_type = "image/png")]
+struct Png {
+    data: Vec<u8>,
+    cache_control: Header<'static>,
+}
+
+impl Png {
+    fn new(data: Vec<u8>) -> Self {
+        Png {
+            data,
+            cache_control: Header::new("Cache-Control", "public, max-age=31536000, immutable"),
+        }
+    }
+}
+
 #[get("/render/<color1>/<color2>/<color3>/<color4>/<color5>")]
 async fn render(
     color1: &str,
@@ -84,7 +102,7 @@ async fn render(
     color3: &str,
     color4: &str,
     color5: &str,
-) -> Result<(ContentType, Vec<u8>), (Status, String)> {
+) -> Result<Png, (Status, String)> {
     let svg = fill_template([color1, color2, color3, color4, color5])
         .map_err(|message| (Status::BadRequest, message))?;
 
@@ -97,7 +115,7 @@ async fn render(
             (Status::InternalServerError, "failed to render image".to_string())
         })?;
 
-    Ok((ContentType::PNG, png))
+    Ok(Png::new(png))
 }
 
 fn render_png(svg: &str) -> Result<Vec<u8>, String> {
