@@ -10,6 +10,7 @@ use rocket::{
     tokio::task::spawn_blocking,
     Config, Responder,
 };
+use resvg::{tiny_skia, usvg};
 
 const TEMPLATE: &str = include_str!("../colors.svg");
 
@@ -125,10 +126,10 @@ fn render_png(svg: &str) -> Result<Vec<u8>, String> {
     let tree = usvg::Tree::from_str(svg, &usvg::Options::default())
         .map_err(|e| format!("invalid SVG: {}", e))?;
 
-    let size = tree.svg_node().size.to_screen_size();
+    let size = tree.size().to_int_size();
     let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
         .ok_or("could not allocate pixmap")?;
-    resvg::render(&tree, usvg::FitTo::Original, pixmap.as_mut()).ok_or("could not render SVG")?;
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
     pixmap
         .encode_png()
@@ -144,9 +145,9 @@ fn figment() -> Figment {
     };
 
     Figment::from(defaults)
-        .select(Profile::from_env_or("ROCKET_PROFILE", Config::DEFAULT_PROFILE))
         .merge(Toml::file(Env::var_or("ROCKET_CONFIG", "Rocket.toml")).nested())
         .merge(Env::prefixed("ROCKET_").ignore(&["PROFILE"]).global())
+        .select(Profile::from_env_or("ROCKET_PROFILE", Config::DEFAULT_PROFILE))
 }
 
 #[rocket::main]
